@@ -43,7 +43,38 @@ inline void delayOneMicro() {
   );
 }
 
+inline void delayOneMicroHalf() {
+  // Arduino Due has 84MHz clock cycle, so 84 clock cycles = 1 microsecond
+  // 115 nops = good enough for 1.5 us (Due can deal with the slight timing difference)
+  asm volatile(
+    "nop\nnop\nnop\nnop\nnop\n"
+    "nop\nnop\nnop\nnop\nnop\n"
+    "nop\nnop\nnop\nnop\nnop\n"
+    "nop\nnop\nnop\nnop\nnop\n"
+    "nop\nnop\nnop\nnop\nnop\n"
+    
+    "nop\nnop\nnop\nnop\nnop\n"
+    "nop\nnop\nnop\nnop\nnop\n"
+    "nop\nnop\nnop\nnop\nnop\n"
+    "nop\nnop\nnop\nnop\nnop\n"
+    "nop\nnop\nnop\nnop\nnop\n"
+    
+    "nop\nnop\nnop\nnop\nnop\n"
+    "nop\nnop\nnop\nnop\nnop\n"
+    "nop\nnop\nnop\nnop\nnop\n"
+    "nop\nnop\nnop\nnop\nnop\n"
+    "nop\nnop\nnop\nnop\nnop\n"
+    
+    "nop\nnop\nnop\nnop\nnop\n"
+    "nop\nnop\nnop\nnop\nnop\n"
+    "nop\nnop\nnop\nnop\nnop\n"
+    "nop\nnop\nnop\nnop\nnop\n"
+    "nop\nnop\nnop\nnop\nnop\n"
+  );
+}
+
 // IMPORTANT: Do NOT connect to console until after setup runs
+// TODO: Check if above is actually an issue! (has issues if unplug Arduino while connected for sure)
 void setup() {
   // Enable serial output for debugging
   Serial.begin(115200);
@@ -84,32 +115,46 @@ void testBasicWrite() {
   delay(1000);
 }
 
-void testReadTrue() {
-  const int MAX_BUFFER = 88;
-  int pos = 0;
+// Reads in one bit gamecube serial communication style then returns that value
+// TODO: Change to returning a bool
+// Note: Does NOT return until reads a value successfully
+// Note: Interrupts SHOULD be disabled before calling function, else may have timing issues!
+int readGCBit() {
   int holder;
-  int val[MAX_BUFFER];
-
-  noInterrupts();
+  int data;
   while(true) {
-    // Keep reading until get a 1 for sure
+    // Keep reading until get a 1 for sure (line should be high else data is already being written)
     holder = -1;
     while(holder != 1) {
       holder = digitalReadDirect(GC_DATA_IN_PIN);
     }
-    
-    // Keep reading until read a 0 (until data transmission begins)
+
+    // Keep reading until get a 0 for sure (a data bit write has begun)
     holder = -1;
     while(holder != 0) {
       holder = digitalReadDirect(GC_DATA_IN_PIN);
     }
 
-    // Wait one microsecond for data
-      // TODO: Wait 1.5 microseconds instead and fix rest of timing
+    // Wait a microsecond and half (so data is for sure on line and stable)
+      // TODO: Either update the comment above or the 100 noop function below
     delayOneMicro();
+    // Read in data bit (whatever's on the line SHOULD be the data that was being sent)
+    data = digitalReadDirect(GC_DATA_IN_PIN);
 
+    // Return data bit read earlier!
+    return data;
+  }
+}
+
+void testReadTrue() {
+  const int MAX_BUFFER = 88;
+  int pos = 0;
+  int val[MAX_BUFFER];
+
+  noInterrupts();
+  while(true) {
     // Read and save data
-    val[pos] = digitalReadDirect(GC_DATA_IN_PIN);
+    val[pos] = readGCBit();
 
     pos++; // For next round
     if(pos != MAX_BUFFER) {
