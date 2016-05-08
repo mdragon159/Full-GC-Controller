@@ -28,3 +28,9 @@ Probably won't update this until project gets to a state that treats the name we
 
 # Side Notes
 If anyone would like to port the code to Uno or otherwise help make the code more universal (such as by simply pointing out a more universal yet still all together correct method of doing something), I would highly appreciate it!
+
+----------------
+# Readme Todos
+ * Add description of circuit plus how to recreate it (plus pull-up resistor console vs controller)
+ * Add description of communication protocol from my perspective
+ * Add useful sources
