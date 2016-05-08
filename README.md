@@ -17,7 +17,7 @@ Note that this project uses an **Arduino Due** rather than, say, the more common
  * Stretch goal: Be able to fairly **easily** (with as little complex "user"-level code as possible) have the Arduino output fairly complex GC controller sequences
 
 # Tools used
-Noted here in case my setup doesn't work with other applications
+Noted here in case my setup doesn't work with other applications. If you notice a case where the setup doesn't work, please let me know by creating an issue!
  * Arduino Due
  * Wii U GC Adapter
  * Windows 10 PC + [Massive's GC USB Driver + vJoy Monitor](http://m4sv.com/page/wii-u-gcn-usb-driver)
