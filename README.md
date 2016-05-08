@@ -1,5 +1,5 @@
-# Arduino-GC-Controller
-Unlike other GC controller projects, this project focuses on making the Arduino act as a controller (instead of reading a controller)
+# Full-GC-Controller
+Unlike other GC controller projects, this project focuses on making the Arduino act as a robust controller (instead of simply reading a controller)
 
 # Intro
 This project is meant to make the Arduino output Gamecube controller signals rather than the more common applications of reading from a GC controller.
@@ -22,9 +22,9 @@ Noted here in case my setup doesn't work with other applications
  * Wii U GC Adapter
  * Windows 10 PC + [Massive's GC USB Driver + vJoy Monitor](http://m4sv.com/page/wii-u-gcn-usb-driver)
 
-# Current Status
+# Current Status: WIP
 Not working =/
-Probably won't update this until project gets to a state that treats the name well, but at the time of writing the Arduino is "successfully" reading full transactions between the GC controller
+Probably won't update this until project gets to a state that treats the name well, but at the time of writing the Arduino is "successfully" reading full transactions between the GC controller (successfully as in reading the full 3 bytes of the read command from the "console" and then reading the 8 bytes from the controller, and the results make mostly sense- however, a few things don't add up and probably have timing/reading issues).
 
 # Side Notes
 If anyone would like to port the code to Uno or otherwise help make the code more universal (such as by simply pointing out a more universal yet still all together correct method of doing something), I would highly appreciate it!
