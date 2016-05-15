@@ -182,7 +182,49 @@ void testReadTrue() {
   }
 }
 
+void testContinuousRead() {
+  const int MAX_BUFFER = 10000;
+  int pos = 0;
+  int val[MAX_BUFFER];
+
+  noInterrupts();
+  while(true) {
+    // Read and save data
+    asm volatile(
+    "nop\nnop\nnop\nnop\nnop\n"
+    "nop\nnop\nnop\nnop\nnop\n"
+    "nop\nnop\nnop\nnop\nnop\n"
+    "nop\nnop\nnop\nnop\nnop\n"
+    );
+    val[pos] = digitalReadDirect(GC_DATA_IN_PIN);
+
+    pos++; // For next round
+    if(pos != MAX_BUFFER) {
+      continue; // Simply repeat
+    }
+    // If reached max buffer, output the info
+      // TODO: Remove or somehow deal with losing timing again?
+    else {
+      interrupts();
+      
+      // Print all normally via serial except last one  
+      for(int i=0; i < MAX_BUFFER; ++i) {
+        Serial.print(val[i]);
+
+        if(i!=0 && i%8 == 0) {
+          Serial.print(" ");
+        }
+      }
+      // Print a newline at the end
+      Serial.print("\r\n\r\n");
+
+      pos = 0; // Restart the buffer from the beginning
+      noInterrupts();
+    }
+  }
+}
+
 void loop() {
   Serial.println("Beginning read system");
-  testReadTrue();
+  testContinuousRead();
 }
