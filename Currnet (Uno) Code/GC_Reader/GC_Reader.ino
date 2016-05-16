@@ -15,7 +15,7 @@ enum GC_Mode {
   As_Controller,  // TODO: Act as a controller and respond to console commands
   As_ThirdParty   // TODO: Simply read transactions on the data line
 };
-const GC_Mode CUR_MODE = As_Console; // Change this line to change the mode... ideally
+const GC_Mode CUR_MODE = As_ThirdParty; // Change this line to change the mode... ideally
 
 #define GC_PIN 2
 #define GC_PIN_DIR DDRD
@@ -368,60 +368,60 @@ static bool rumble = false;
 // NOTE: Must have a pull-up resistor between data line and 3.3V!
 inline void act_console() {
   int status;
-    unsigned char data, addr;
-
-    // clear out incomming raw data buffer
-    // this should be unnecessary
-    //memset(gc_raw_dump, 0, sizeof(gc_raw_dump));
-
-    // Command to send to the gamecube
-    // The last bit is rumble, flip it to rumble
-    unsigned char command[] = {0x40, 0x03, 0x00};
-    if (rumble) {
-        command[2] = 0x01;
-    }
-
-    // turn on the led, so we can visually see things are happening
-    digitalWrite(13, LOW);
-    // don't want interrupts getting in the way
+  unsigned char data, addr;
+  
+  // clear out incomming raw data buffer
+  // this should be unnecessary
+  //memset(gc_raw_dump, 0, sizeof(gc_raw_dump));
+  
+  // Command to send to the gamecube
+  // The last bit is rumble, flip it to rumble
+  unsigned char command[] = {0x40, 0x03, 0x00};
+  if (rumble) {
+      command[2] = 0x01;
+  }
+  
+  // turn on the led, so we can visually see things are happening
+  digitalWrite(13, LOW);
+  // don't want interrupts getting in the way
+  noInterrupts();
+  // send those 3 bytes
+  gc_send(command, 3);
+  // read in data and dump it to gc_raw_dump
+  status = gc_get();
+  // end of time sensitive code
+  interrupts();
+  digitalWrite(13, HIGH);
+  
+  if (status == 0) {
+    // problem with getting the gamecube controller status. Maybe it's unplugged?
+    // set a neutral N64 string
+    Serial.print(millis(), DEC);
+    Serial.println(" | GC controller read error. Trying to re-initialize");
+    Serial.flush();
+   // memset(n64_buffer, 0, sizeof(n64_buffer));
+    memset(&gc_status, 0, sizeof(gc_status));
+    gc_status.stick_x = zero_x;
+    gc_status.stick_y = zero_y;
+    // this may not work if the controller isn't plugged in, but if it
+    // fails we'll try again next loop
     noInterrupts();
-    // send those 3 bytes
-    gc_send(command, 3);
-    // read in data and dump it to gc_raw_dump
-    status = gc_get();
-    // end of time sensitive code
+    init_gc_controller();
     interrupts();
-    digitalWrite(13, HIGH);
-
-    if (status == 0) {
-        // problem with getting the gamecube controller status. Maybe it's unplugged?
-        // set a neutral N64 string
-        Serial.print(millis(), DEC);
-        Serial.println(" | GC controller read error. Trying to re-initialize");
-        Serial.flush();
-       // memset(n64_buffer, 0, sizeof(n64_buffer));
-        memset(&gc_status, 0, sizeof(gc_status));
-        gc_status.stick_x = zero_x;
-        gc_status.stick_y = zero_y;
-        // this may not work if the controller isn't plugged in, but if it
-        // fails we'll try again next loop
-        noInterrupts();
-        init_gc_controller();
-        interrupts();
-    } else {
-        // translate the data to the n64 byte string
-          // gc_to_64();
-    }
-
-    // Wait for incomming 64 command
-    // this will block until the N64 sends us a command
-    noInterrupts();
-    // get_n64_command();
-
-    interrupts();
-
-    // DEBUG: print it
-    print_gc_status();
+  } else {
+      // translate the data to the n64 byte string
+        // gc_to_64();
+  }
+  
+  // Wait for incomming 64 command
+  // this will block until the N64 sends us a command
+  noInterrupts();
+  // get_n64_command();
+  
+  interrupts();
+  
+  // DEBUG: print it
+  print_gc_status();
 }
 
 // Act as a controller and respond with data according to commands coming in
@@ -429,9 +429,139 @@ inline void act_controller() {
   // TODO: Everything
 }
 
+// Function to read data between transactions
+// TODO: Make read variable length
+// Returns 1 if successful, 0 if unsuccessful
+static int gc_read(unsigned char* bitbuffer) {
+  // listen for the expected 8 bytes of data back from the controller and
+    // and pack it into the gc_status struct.
+    asm volatile (";Starting to listen");
+
+    unsigned char retval;
+
+    asm volatile (
+            "; START OF MANUAL ASSEMBLY BLOCK\n"
+            // r25 is our bit counter. We read 64 bits and increment the byte
+            // pointer every 8 bits
+            "ldi r25,lo8(0)\n"
+            // read in the first byte of the gc_status struct
+            "ld r23,Z\n"
+            // default exit value is 1 (success)
+            "ldi %[retval],lo8(1)\n"
+
+            // Top of the main read loop label
+            "L%=_read_loop:\n"
+
+            // This first spinloop waits for the line to go low. It loops 64
+            // times before it gives up and returns
+            "ldi r24,lo8(64)\n" // r24 is the timeout counter
+            "L%=_1:\n"
+            "sbis 0x9,2\n" // reg 9 bit 2 is PIND2, or arduino I/O 2
+            "rjmp L%=_2\n" // line is low. jump to below
+            // the following happens if the line is still high
+            "subi r24,lo8(1)\n"
+            "brne L%=_1\n" // loop if the counter isn't 0
+            // timeout? set output to 0 indicating failure and jump to
+            // the end
+            "ldi %[retval],lo8(0)\n"
+            "rjmp L%=_exit\n"
+            "L%=_2:\n"
+
+            // Next block. The line has just gone low. Wait approx 2µs
+            // each cycle is 1/16 µs on a 16Mhz processor
+            "nop\nnop\nnop\nnop\nnop\n"
+            "nop\nnop\nnop\nnop\nnop\n"
+            "nop\nnop\nnop\nnop\nnop\n"
+            "nop\nnop\nnop\nnop\nnop\n"
+            "nop\nnop\nnop\nnop\nnop\n"
+            "nop\nnop\nnop\nnop\nnop\n"
+
+            // This block left shifts the current gc_status byte in r23,
+            // and adds the current line state as the LSB
+            "lsl r23\n" // left shift
+            "sbic 0x9,2\n" // read PIND2
+            "sbr r23,lo8(1)\n" // set bit 1 in r23 if PIND2 is high
+            "st Z,r23\n" // save r23 back to memory. We technically only have
+            // to do this every 8 bits but this simplifies the branches below
+
+            // This block increments the bitcount(r25). If bitcount is 64, exit
+            // with success. If bitcount is a multiple of 8, then increment Z
+            // and load the next byte.
+            "subi r25,lo8(-1)\n" // increment bitcount
+            "cpi r25,lo8(64)\n" // == 64?
+            "breq L%=_exit\n" // jump to exit
+            "mov r24,r25\n" // copy bitcounter(r25) to r24 for tmp
+            "andi r24,lo8(7)\n" // get lower 3 bits
+            "brne L%=_3\n" // branch if not 0 (is not divisble by 8)
+            "adiw r30,1\n" // if divisible by 8, increment pointer
+            "ld r23,Z\n" // ...and load the new byte into r23
+            "L%=_3:\n"
+
+            // This next block waits for the line to go high again. again, it
+            // sets a timeout counter of 64 iterations
+            "ldi r24,lo8(64)\n" // r24 is the timeout counter
+            "L%=_4:\n"
+            "sbic 0x9,2\n" // checks PIND2
+            "rjmp L%=_read_loop\n" // line is high. ready for next loop
+            // the following happens if the line is still low
+            "subi r24,lo8(1)\n"
+            "brne L%=_4\n" // loop if the counter isn't 0
+            // timeout? set output to 0 indicating failure and fall through to
+            // the end
+            "ldi %[retval],lo8(0)\n"
+
+
+            "L%=_exit:\n"
+            ";END OF MANUAL ASSEMBLY BLOCK\n"
+            // ----------
+            // outputs:
+            : [retval] "=r" (retval),
+            // About the bitbin pointer: The "z" constraint tells the
+            // compiler to put the pointer in the Z register pair (r31:r30)
+            // The + tells the compiler that we are both reading and writing
+            // this pointer. This is important because otherwise it will
+            // allocate the same register for retval (r30).
+            "+z" (bitbuffer)
+            // clobbers (registers we use in the assembly for the compiler to
+            // avoid):
+            :: "r25", "r24", "r23"
+            );
+
+    return retval;
+}
+
 // Be a third party and simply observe transactions on the data line
 inline void act_thirdparty() {
-  // TODO: Everything
+  // Initialize 8 bytes worth of space to read
+  const int SIZE = 8;
+  unsigned char data[SIZE];
+
+  // Read in 8 bytes
+  noInterrupts();
+  int success = 0;
+  while(!success) 
+    success = gc_read(data);
+  interrupts();
+
+  // If successful, print out the data
+  if(success) {
+    // Output the 8 bytes
+    for(int i = 0; i < SIZE; i++) {
+      // Output each bit in the char in MSB order (which is read order)
+      unsigned char bitPlace = 0x80; // 128
+      for(int j = 7; j >= 0; j--) {
+        Serial.print(data[i] & bitPlace ? 1:0); // print out current bit
+        bitPlace /= 2; // 128 -> 64 -> 32 -> 16 -> 8 -> 4 -> 2 -> 1
+      }
+      Serial.print(" "); // Byte spacer
+    }
+    Serial.println();
+  }
+  // Otherwise, print out that was not successful
+  else {
+    //Serial.println("Thirdparty read was not successful");
+  }
+  
 }
 
 void setup()
@@ -451,10 +581,11 @@ void setup()
   digitalWrite(GC_PIN, LOW);  
   pinMode(GC_PIN, INPUT);
 
-  noInterrupts();
-  init_gc_controller();
-
-  do {
+  if(CUR_MODE == As_Console) {
+    noInterrupts();
+    init_gc_controller();
+  
+    do {
       // Query for the gamecube controller's status. We do this
       // to get the 0 point for the control stick.
       unsigned char command[] = {0x40, 0x03, 0x00};
@@ -473,8 +604,8 @@ void setup()
       // some crappy/broken controllers seem to give bad readings
       // occasionally. This is a cheap hack to keep reading the
       // controller until we get a reading that is less erroneous.
-  } while (zero_x == 0 || zero_y == 0);
-  
+    } while (zero_x == 0 || zero_y == 0);
+  }  
 }
 
 void loop()
