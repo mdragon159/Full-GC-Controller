@@ -431,23 +431,27 @@ inline void act_controller() {
 
 // Function to read data between transactions
 // TODO: Make read variable length
-// Returns 1 if successful, 0 if unsuccessful
+// Returns number of bits successfully read, or -1 if error
 static int gc_read(unsigned char* bitbuffer) {
   // listen for the expected 8 bytes of data back from the controller and
     // and pack it into the gc_status struct.
     asm volatile (";Starting to listen");
 
+    // TODO: If length too long, return -1
+
+    // Return value is number of bits read
     unsigned char retval;
 
     asm volatile (
-            "; START OF MANUAL ASSEMBLY BLOCK\n"
+            "; START OF MANUAL ASSEMBLY BLOCK\n"            
             // r25 is our bit counter. We read 64 bits and increment the byte
             // pointer every 8 bits
             "ldi r25,lo8(0)\n"
             // read in the first byte of the gc_status struct
             "ld r23,Z\n"
-            // default exit value is 1 (success)
-            "ldi %[retval],lo8(1)\n"
+            
+            // default exit value is 0 (no bits read)
+            "ldi %[retval],lo8(0)\n"
 
             // Top of the main read loop label
             "L%=_read_loop:\n"
@@ -461,13 +465,14 @@ static int gc_read(unsigned char* bitbuffer) {
             // the following happens if the line is still high
             "subi r24,lo8(1)\n"
             "brne L%=_1\n" // loop if the counter isn't 0
-            // timeout? set output to 0 indicating failure and jump to
-            // the end
-            "ldi %[retval],lo8(0)\n"
+            
+            // Timeout: Simply exit
             "rjmp L%=_exit\n"
+            
             "L%=_2:\n"
-
-            // Next block. The line has just gone low. Wait approx 2µs
+            // Increment return value by one as valid bit is about to be read
+            "subi %[retval],lo8(-1)\n"           
+            // Next block. The line has just gone low. Wait APPROX 2µs
             // each cycle is 1/16 µs on a 16Mhz processor
             "nop\nnop\nnop\nnop\nnop\n"
             "nop\nnop\nnop\nnop\nnop\n"
@@ -506,10 +511,8 @@ static int gc_read(unsigned char* bitbuffer) {
             // the following happens if the line is still low
             "subi r24,lo8(1)\n"
             "brne L%=_4\n" // loop if the counter isn't 0
-            // timeout? set output to 0 indicating failure and fall through to
-            // the end
-            "ldi %[retval],lo8(0)\n"
-
+            
+            // Timeout: Simply fall to exit
 
             "L%=_exit:\n"
             ";END OF MANUAL ASSEMBLY BLOCK\n"
@@ -538,29 +541,27 @@ inline void act_thirdparty() {
 
   // Read in 8 bytes
   noInterrupts();
-  int success = 0;
-  while(!success) 
-    success = gc_read(data);
+  int bitsRead = 0;
+  while(!bitsRead) 
+    bitsRead = gc_read(data);
   interrupts();
 
-  // If successful, print out the data
-  if(success) {
-    // Output the 8 bytes
-    for(int i = 0; i < SIZE; i++) {
-      // Output each bit in the char in MSB order (which is read order)
-      unsigned char bitPlace = 0x80; // 128
-      for(int j = 7; j >= 0; j--) {
-        Serial.print(data[i] & bitPlace ? 1:0); // print out current bit
-        bitPlace /= 2; // 128 -> 64 -> 32 -> 16 -> 8 -> 4 -> 2 -> 1
-      }
-      Serial.print(" "); // Byte spacer
+
+  // Output number of bits read
+  Serial.print("Bits read: ");
+  Serial.println(bitsRead);
+
+  // Output the full 8 bytes of data
+  for(int i = 0; i < SIZE; i++) {
+    // Output each bit in the char in MSB order (which is read order)
+    unsigned char bitPlace = 0x80; // 128
+    for(int j = 7; j >= 0; j--) {
+      Serial.print(data[i] & bitPlace ? 1:0); // print out current bit
+      bitPlace /= 2; // 128 -> 64 -> 32 -> 16 -> 8 -> 4 -> 2 -> 1
     }
-    Serial.println();
+    Serial.print(" "); // Byte spacer
   }
-  // Otherwise, print out that was not successful
-  else {
-    //Serial.println("Thirdparty read was not successful");
-  }
+  Serial.println();
   
 }
 
