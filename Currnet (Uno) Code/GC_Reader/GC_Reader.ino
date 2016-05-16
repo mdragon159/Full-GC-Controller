@@ -430,17 +430,17 @@ inline void act_controller() {
 }
 
 // Function to read data between transactions
-// TODO: Make read variable length
-// Returns number of bits successfully read, or -1 if error
-static int gc_read(unsigned char* bitbuffer) {
+// bitbuffer = 
+// Returns number of bits successfully read
+static uint8_t gc_read(uint8_t* bitbuffer, uint8_t length_in_bits) {
   // listen for the expected 8 bytes of data back from the controller and
     // and pack it into the gc_status struct.
     asm volatile (";Starting to listen");
 
-    // TODO: If length too long, return -1
-
+    // TODO: If length is too long, return 0 immediately
+    
     // Return value is number of bits read
-    unsigned char retval;
+    uint8_t retval;
 
     asm volatile (
             "; START OF MANUAL ASSEMBLY BLOCK\n"            
@@ -493,7 +493,7 @@ static int gc_read(unsigned char* bitbuffer) {
             // with success. If bitcount is a multiple of 8, then increment Z
             // and load the next byte.
             "subi r25,lo8(-1)\n" // increment bitcount
-            "cpi r25,lo8(64)\n" // == 64?
+            "cp r25, %[length_in_bits]\n" // == read length?
             "breq L%=_exit\n" // jump to exit
             "mov r24,r25\n" // copy bitcounter(r25) to r24 for tmp
             "andi r24,lo8(7)\n" // get lower 3 bits
@@ -525,9 +525,11 @@ static int gc_read(unsigned char* bitbuffer) {
             // this pointer. This is important because otherwise it will
             // allocate the same register for retval (r30).
             "+z" (bitbuffer)
+            // inputs:
+            : [length_in_bits] "r" (length_in_bits)
             // clobbers (registers we use in the assembly for the compiler to
             // avoid):
-            :: "r25", "r24", "r23"
+            : "r25", "r24", "r23"
             );
 
     return retval;
@@ -536,14 +538,14 @@ static int gc_read(unsigned char* bitbuffer) {
 // Be a third party and simply observe transactions on the data line
 inline void act_thirdparty() {
   // Initialize 8 bytes worth of space to read
-  const int SIZE = 8;
-  unsigned char data[SIZE];
+  const uint8_t SIZE = 16;
+  uint8_t data[SIZE] = {0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0};
 
   // Read in 8 bytes
   noInterrupts();
   int bitsRead = 0;
-  while(!bitsRead) 
-    bitsRead = gc_read(data);
+  while(!bitsRead)
+    bitsRead = gc_read(data, 128);
   interrupts();
 
 
@@ -554,7 +556,7 @@ inline void act_thirdparty() {
   // Output the full 8 bytes of data
   for(int i = 0; i < SIZE; i++) {
     // Output each bit in the char in MSB order (which is read order)
-    unsigned char bitPlace = 0x80; // 128
+    uint8_t bitPlace = 0x80; // 128
     for(int j = 7; j >= 0; j--) {
       Serial.print(data[i] & bitPlace ? 1:0); // print out current bit
       bitPlace /= 2; // 128 -> 64 -> 32 -> 16 -> 8 -> 4 -> 2 -> 1
