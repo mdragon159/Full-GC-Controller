@@ -1,8 +1,8 @@
 # Current (Uno) Code
-Currently
+Something that works so-so
 
 # Very large thanks to...
-Andrew Brown and his very amazing Gamecube-N64-Controller repo!
+Andrew Brown and his very amazing [Gamecube-N64-Controller repo](https://github.com/brownan/Gamecube-N64-Controller)!
 
 Saved me a LOT of work. I don't know how to stress how much time this repo saved me! And it worked absolutely perfectly in every respect as expected for reading from a GC controller (and for writing to the data line pretty much perfectly)!
 
