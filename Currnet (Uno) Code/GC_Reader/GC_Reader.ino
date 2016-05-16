@@ -366,7 +366,7 @@ static void print_gc_status()
 static bool rumble = false;
 // Act as a console and read from an attached GC controller
 // NOTE: Must have a pull-up resistor between data line and 3.3V!
-void act_console() {
+inline void act_console() {
   int status;
     unsigned char data, addr;
 
@@ -425,12 +425,12 @@ void act_console() {
 }
 
 // Act as a controller and respond with data according to commands coming in
-void act_controller() {
+inline void act_controller() {
   // TODO: Everything
 }
 
 // Be a third party and simply observe transactions on the data line
-void act_thirdparty() {
+inline void act_thirdparty() {
   // TODO: Everything
 }
 
