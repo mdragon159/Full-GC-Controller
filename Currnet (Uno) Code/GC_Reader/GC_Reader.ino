@@ -7,6 +7,16 @@
 
 #include "pins_arduino.h"
 
+
+// Easily switch the mode between Arduino acting as a console, controller, or third party
+  // Precursor work for separating behavior within a single library
+enum GC_Mode {
+  As_Console,     // Act as the console and read data from the GC controller
+  As_Controller,  // TODO: Act as a controller and respond to console commands
+  As_ThirdParty   // TODO: Simply read transactions on the data line
+};
+const GC_Mode CUR_MODE = As_Console; // Change this line to change the mode... ideally
+
 #define GC_PIN 2
 #define GC_PIN_DIR DDRD
 // these two macros set arduino pin 2 to input or output, which with an
@@ -39,49 +49,6 @@ static void gc_send(unsigned char *buffer, char length);
 static int gc_get();
 static void init_gc_controller();
 static void print_gc_status();
-
-void setup()
-{
-  Serial.begin(115200);
-
-  Serial.println();
-  Serial.println("Code has started!");
-  Serial.flush();
-
-  // Status LED
-  digitalWrite(13, LOW);
-  pinMode(13, OUTPUT);
-
-  // Communication with gamecube controller on this pin
-  // Don't remove these lines, we don't want to push +5V to the controller
-  digitalWrite(GC_PIN, LOW);  
-  pinMode(GC_PIN, INPUT);
-
-  noInterrupts();
-  init_gc_controller();
-
-  do {
-      // Query for the gamecube controller's status. We do this
-      // to get the 0 point for the control stick.
-      unsigned char command[] = {0x40, 0x03, 0x00};
-      gc_send(command, 3);
-      // read in data and dump it to gc_raw_dump
-      gc_get();
-      interrupts();
-      zero_x = gc_status.stick_x;
-      zero_y = gc_status.stick_y;
-      Serial.print("GC zero point read: ");
-      Serial.print(zero_x, DEC);
-      Serial.print(", ");
-      Serial.println(zero_y, DEC);
-      Serial.flush();
-      
-      // some crappy/broken controllers seem to give bad readings
-      // occasionally. This is a cheap hack to keep reading the
-      // controller until we get a reading that is less erroneous.
-  } while (zero_x == 0 || zero_y == 0);
-  
-}
 
 static void init_gc_controller()
 {
@@ -397,9 +364,10 @@ static void print_gc_status()
 }
 
 static bool rumble = false;
-void loop()
-{
-    int status;
+// Act as a console and read from an attached GC controller
+// NOTE: Must have a pull-up resistor between data line and 3.3V!
+void act_console() {
+  int status;
     unsigned char data, addr;
 
     // clear out incomming raw data buffer
@@ -454,6 +422,82 @@ void loop()
 
     // DEBUG: print it
     print_gc_status();
+}
+
+// Act as a controller and respond with data according to commands coming in
+void act_controller() {
+  // TODO: Everything
+}
+
+// Be a third party and simply observe transactions on the data line
+void act_thirdparty() {
+  // TODO: Everything
+}
+
+void setup()
+{
+  Serial.begin(115200);
+
+  Serial.println();
+  Serial.println("Code has started!");
+  Serial.flush();
+
+  // Status LED
+  digitalWrite(13, LOW);
+  pinMode(13, OUTPUT);
+
+  // Communication with gamecube controller on this pin
+  // Don't remove these lines, we don't want to push +5V to the controller
+  digitalWrite(GC_PIN, LOW);  
+  pinMode(GC_PIN, INPUT);
+
+  noInterrupts();
+  init_gc_controller();
+
+  do {
+      // Query for the gamecube controller's status. We do this
+      // to get the 0 point for the control stick.
+      unsigned char command[] = {0x40, 0x03, 0x00};
+      gc_send(command, 3);
+      // read in data and dump it to gc_raw_dump
+      gc_get();
+      interrupts();
+      zero_x = gc_status.stick_x;
+      zero_y = gc_status.stick_y;
+      Serial.print("GC zero point read: ");
+      Serial.print(zero_x, DEC);
+      Serial.print(", ");
+      Serial.println(zero_y, DEC);
+      Serial.flush();
+      
+      // some crappy/broken controllers seem to give bad readings
+      // occasionally. This is a cheap hack to keep reading the
+      // controller until we get a reading that is less erroneous.
+  } while (zero_x == 0 || zero_y == 0);
   
+}
+
+void loop()
+{
+  // Call the appropriate function according to the pre-set mode
+    // Trying to encapsulate the behavior properly to make it easier to separate into a library
+    switch(CUR_MODE) {
+      case As_Console:
+        act_console();
+        break;
+
+      case As_Controller:
+        act_controller;
+        break;
+
+      case As_ThirdParty:
+        act_thirdparty();
+        break;
+
+      default:
+        // Should never reach here!
+        Serial.println("\r\nERROR: GC_Mode CUR_MODE undefined!\r\m");
+        break;
+    }
 }
 
