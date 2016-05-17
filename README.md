@@ -22,15 +22,15 @@ Noted here in case my setup doesn't work with other applications. If you notice 
  * Wii U GC Adapter
  * Windows 10 PC + [Massive's GC USB Driver + vJoy Monitor](http://m4sv.com/page/wii-u-gcn-usb-driver)
 
-# Current Status: WIP
-Not working =/
-Probably won't update this until project gets to a state that treats the name well, but at the time of writing the Arduino is "successfully" reading full transactions between the GC controller (successfully as in reading the full 3 bytes of the read command from the "console" and then reading the 8 bytes from the controller, and the results make mostly sense- however, a few things don't add up and probably have timing/reading issues).
+# Current Status: WIP/Not yet done or even satisfactory
+Please visit the readme within the "Current (Uno) Code" folder for a more up to date and better description.
 
 # Side Notes
-If anyone would like to port the code to Uno or otherwise help make the code more universal (such as by simply pointing out a more universal yet still all together correct method of doing something), I would highly appreciate it!
+If anyone would like to port the code to Due or otherwise help make the code more universal (such as by simply pointing out a more universal yet still all together correct method of doing something), I would highly appreciate it!
 
 ----------------
 # Readme Todos
  * Add description of circuit plus how to recreate it (eg, plus pull-up resistor console vs controller)
  * Add description of communication protocol from my perspective
  * Add useful sources
+ * Probably create a wiki very soon instead and move much of this over there
