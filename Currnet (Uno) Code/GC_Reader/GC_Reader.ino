@@ -13,7 +13,7 @@
 enum GC_Mode {
   As_Console,     // Act as the console and read data from the GC controller
   As_Controller,  // TODO: Act as a controller and respond to console commands
-  As_ThirdParty   // TODO: Simply read transactions on the data line
+  As_ThirdParty   // Simply read transactions on the data line
 };
 const GC_Mode CUR_MODE = As_ThirdParty; // Change this line to change the mode... ideally
 
@@ -49,6 +49,9 @@ static void gc_send(unsigned char *buffer, char length);
 static int gc_get();
 static void init_gc_controller();
 static void print_gc_status();
+
+
+/****** FUNCTIONS: Base GC functions *******/
 
 static void init_gc_controller()
 {
@@ -312,6 +315,123 @@ static int gc_get()
     return retval;
 }
 
+// Reads variable length of data on data line into a data buffer
+// Returns number of bits successfully read
+// Note: Uncertain behavior if bitbuffer does not contain length_in_bits bits
+static uint8_t gc_read(uint8_t* bitbuffer, uint8_t length_in_bits) {
+  // listen for the expected 8 bytes of data back from the controller and
+    // and pack it into the gc_status struct.
+    asm volatile (";Starting to listen");
+    
+    // Return value is number of bits read
+    uint8_t retval;
+
+    asm volatile (
+            "; START OF MANUAL ASSEMBLY BLOCK\n"            
+            // r25 is our bit counter. We read 64 bits and increment the byte
+            // pointer every 8 bits
+            "ldi r25,lo8(0)\n"
+            // read in the first byte of the gc_status struct
+            "ld r23,Z\n"
+            
+            // default exit value is 0 (no bits read)
+            "ldi %[retval],lo8(0)\n"
+
+            // Top of the main read loop label
+            "L%=_read_loop:\n"
+
+            // This first spinloop waits for the line to go low. It loops 64
+            // times before it gives up and returns
+            "ldi r24,lo8(64)\n" // r24 is the timeout counter
+            "L%=_1:\n"
+            "sbis 0x9,2\n" // reg 9 bit 2 is PIND2, or arduino I/O 2
+            "rjmp L%=_2\n" // line is low. jump to below
+            // the following happens if the line is still high
+            "subi r24,lo8(1)\n"
+            "brne L%=_1\n" // loop if the counter isn't 0
+            
+            // Timeout: Simply exit
+            "rjmp L%=_early_exit\n"
+            
+            "L%=_2:\n"
+            // Increment return value by one as valid bit is about to be read
+            "subi %[retval],lo8(-1)\n"           
+            // Next block. The line has just gone low. Wait APPROX 2µs
+            // each cycle is 1/16 µs on a 16Mhz processor
+            "nop\nnop\nnop\nnop\nnop\n"
+            "nop\nnop\nnop\nnop\nnop\n"
+            "nop\nnop\nnop\nnop\nnop\n"
+            "nop\nnop\nnop\nnop\nnop\n"
+            "nop\nnop\nnop\nnop\nnop\n"
+            "nop\nnop\nnop\nnop\nnop\n"
+
+            // This block left shifts the current gc_status byte in r23,
+            // and adds the current line state as the LSB
+            "lsl r23\n" // left shift
+            "sbic 0x9,2\n" // read PIND2
+            "sbr r23,lo8(1)\n" // set bit 1 in r23 if PIND2 is high
+            
+            // This block increments the bitcount(r25). If bitcount is 64, exit
+            // with success. If bitcount is a multiple of 8, then increment Z
+            // and load the next byte.
+            "subi r25,lo8(-1)\n" // increment bitcount
+            "cp r25, %[length_in_bits]\n" // == read length?
+            "breq L%=_exit\n" // jump to exit
+            "mov r24,r25\n" // copy bitcounter(r25) to r24 for tmp
+            "andi r24,lo8(7)\n" // get lower 3 bits
+            "brne L%=_3\n" // branch if not 0 (is not divisble by 8)
+            "st Z,r23\n" // if divisible by 8, save r23 back to memory
+            "adiw r30,1\n" // increment pointer
+            "ld r23,Z\n" // ...and load the new byte into r23
+            "L%=_3:\n"
+
+            // This next block waits for the line to go high again. again, it
+            // sets a timeout counter of 64 iterations
+            "ldi r24,lo8(64)\n" // r24 is the timeout counter
+            "L%=_4:\n"
+            "sbic 0x9,2\n" // checks PIND2
+            "rjmp L%=_read_loop\n" // line is high. ready for next loop
+            // the following happens if the line is still low
+            "subi r24,lo8(1)\n"
+            "brne L%=_4\n" // loop if the counter isn't 0
+            // Timeout: Simply fall to early exit
+
+            // Early exit: Left shift as necessary so first read bit is at the MSB
+            "L%=_early_exit:\n"
+            // If divisible by 8, save and branch to exit
+            // else, left shift, increment by 1, and repeat
+            "mov r24,r25\n" // copy bitcounter(r25) to r24 for tmp
+            "andi r24,lo8(7)\n" // get lower 3 bits
+            "breq L%=_finish_early_exit\n" // branch if 0 (is divisble by 8)
+            "subi r25,lo8(-1)\n" // if not divisible by 8, increment bitcount
+            "lsl r23\n" // left shift
+            "rjmp L%=_early_exit\n"
+
+            "L%=_finish_early_exit:\n"
+            "st Z,r23\n" // save properly shifted r23 back to memory
+
+            "L%=_exit:\n"
+            
+            ";END OF MANUAL ASSEMBLY BLOCK\n"
+            // ----------
+            // outputs:
+            : [retval] "=r" (retval),
+            // About the bitbin pointer: The "z" constraint tells the
+            // compiler to put the pointer in the Z register pair (r31:r30)
+            // The + tells the compiler that we are both reading and writing
+            // this pointer. This is important because otherwise it will
+            // allocate the same register for retval (r30).
+            "+z" (bitbuffer)
+            // inputs:
+            : [length_in_bits] "r" (length_in_bits)
+            // clobbers (registers we use in the assembly for the compiler to
+            // avoid):
+            : "r25", "r24", "r23"
+            );
+
+    return retval;
+}
+
 static void print_gc_status()
 {
     Serial.println();
@@ -362,6 +482,10 @@ static void print_gc_status()
     Serial.println(gc_status.right, DEC);
     Serial.flush();
 }
+
+
+
+/****** FUNCTIONS: Act As functions *******/
 
 static bool rumble = false;
 // Act as a console and read from an attached GC controller
@@ -429,124 +553,6 @@ inline void act_controller() {
   // TODO: Everything
 }
 
-// Function to read data between transactions
-// bitbuffer = 
-// Returns number of bits successfully read
-static uint8_t gc_read(uint8_t* bitbuffer, uint8_t length_in_bits) {
-  // listen for the expected 8 bytes of data back from the controller and
-    // and pack it into the gc_status struct.
-    asm volatile (";Starting to listen");
-
-    // TODO: If length is too long, return 0 immediately
-    
-    // Return value is number of bits read
-    uint8_t retval;
-
-    asm volatile (
-            "; START OF MANUAL ASSEMBLY BLOCK\n"            
-            // r25 is our bit counter. We read 64 bits and increment the byte
-            // pointer every 8 bits
-            "ldi r25,lo8(0)\n"
-            // read in the first byte of the gc_status struct
-            "ld r23,Z\n"
-            
-            // default exit value is 0 (no bits read)
-            "ldi %[retval],lo8(0)\n"
-
-            // Top of the main read loop label
-            "L%=_read_loop:\n"
-
-            // This first spinloop waits for the line to go low. It loops 64
-            // times before it gives up and returns
-            "ldi r24,lo8(64)\n" // r24 is the timeout counter
-            "L%=_1:\n"
-            "sbis 0x9,2\n" // reg 9 bit 2 is PIND2, or arduino I/O 2
-            "rjmp L%=_2\n" // line is low. jump to below
-            // the following happens if the line is still high
-            "subi r24,lo8(1)\n"
-            "brne L%=_1\n" // loop if the counter isn't 0
-            
-            // Timeout: Simply exit
-            "rjmp L%=_early_exit\n"
-            
-            "L%=_2:\n"
-            // Increment return value by one as valid bit is about to be read
-            "subi %[retval],lo8(-1)\n"           
-            // Next block. The line has just gone low. Wait APPROX 2µs
-            // each cycle is 1/16 µs on a 16Mhz processor
-            "nop\nnop\nnop\nnop\nnop\n"
-            "nop\nnop\nnop\nnop\nnop\n"
-            "nop\nnop\nnop\nnop\nnop\n"
-            "nop\nnop\nnop\nnop\nnop\n"
-            "nop\nnop\nnop\nnop\nnop\n"
-            "nop\nnop\nnop\nnop\nnop\n"
-
-            // This block left shifts the current gc_status byte in r23,
-            // and adds the current line state as the LSB
-            "lsl r23\n" // left shift
-            "sbic 0x9,2\n" // read PIND2
-            "sbr r23,lo8(1)\n" // set bit 1 in r23 if PIND2 is high
-            // This block increments the bitcount(r25). If bitcount is 64, exit
-            // with success. If bitcount is a multiple of 8, then increment Z
-            // and load the next byte.
-            "subi r25,lo8(-1)\n" // increment bitcount
-            "cp r25, %[length_in_bits]\n" // == read length?
-            "breq L%=_exit\n" // jump to exit
-            "mov r24,r25\n" // copy bitcounter(r25) to r24 for tmp
-            "andi r24,lo8(7)\n" // get lower 3 bits
-            "brne L%=_3\n" // branch if not 0 (is not divisble by 8)
-            "st Z,r23\n" // if divisible by 8, save r23 back to memory
-            "adiw r30,1\n" // increment pointer
-            "ld r23,Z\n" // ...and load the new byte into r23
-            "L%=_3:\n"
-
-            // This next block waits for the line to go high again. again, it
-            // sets a timeout counter of 64 iterations
-            "ldi r24,lo8(64)\n" // r24 is the timeout counter
-            "L%=_4:\n"
-            "sbic 0x9,2\n" // checks PIND2
-            "rjmp L%=_read_loop\n" // line is high. ready for next loop
-            // the following happens if the line is still low
-            "subi r24,lo8(1)\n"
-            "brne L%=_4\n" // loop if the counter isn't 0
-            // Timeout: Simply fall to early exit
-
-            // Early exit: Left shift as necessary so first read bit is at the MSB
-            "L%=_early_exit:\n"
-            // If divisible by 8, save and branch to exit
-            // else, left shift, increment by 1, and repeat
-            "mov r24,r25\n" // copy bitcounter(r25) to r24 for tmp
-            "andi r24,lo8(7)\n" // get lower 3 bits
-            "breq L%=_finish_early_exit\n" // branch if 0 (is divisble by 8)
-            "subi r25,lo8(-1)\n" // if not divisible by 8, increment bitcount
-            "lsl r23\n" // left shift
-            "rjmp L%=_early_exit\n"
-
-            "L%=_finish_early_exit:\n"
-            "st Z,r23\n" // save properly shifted r23 back to memory
-
-            "L%=_exit:\n"
-            
-            ";END OF MANUAL ASSEMBLY BLOCK\n"
-            // ----------
-            // outputs:
-            : [retval] "=r" (retval),
-            // About the bitbin pointer: The "z" constraint tells the
-            // compiler to put the pointer in the Z register pair (r31:r30)
-            // The + tells the compiler that we are both reading and writing
-            // this pointer. This is important because otherwise it will
-            // allocate the same register for retval (r30).
-            "+z" (bitbuffer)
-            // inputs:
-            : [length_in_bits] "r" (length_in_bits)
-            // clobbers (registers we use in the assembly for the compiler to
-            // avoid):
-            : "r25", "r24", "r23"
-            );
-
-    return retval;
-}
-
 // Be a third party and simply observe transactions on the data line
 inline void act_thirdparty() {
   // Initialize 8 bytes worth of space to read
@@ -579,6 +585,9 @@ inline void act_thirdparty() {
   
 }
 
+
+/****** FUNCTIONS: Base Arduino functions *******/
+
 void setup()
 {
   Serial.begin(115200);
@@ -599,11 +608,13 @@ void setup()
   if(CUR_MODE == As_Console) {
     noInterrupts();
     init_gc_controller();
+    interrupts();
   
     do {
       // Query for the gamecube controller's status. We do this
       // to get the 0 point for the control stick.
       unsigned char command[] = {0x40, 0x03, 0x00};
+      noInterrupts();
       gc_send(command, 3);
       // read in data and dump it to gc_raw_dump
       gc_get();
@@ -627,23 +638,23 @@ void loop()
 {
   // Call the appropriate function according to the pre-set mode
     // Trying to encapsulate the behavior properly to make it easier to separate into a library
-    switch(CUR_MODE) {
-      case As_Console:
-        act_console();
-        break;
+  switch(CUR_MODE) {
+    case As_Console:
+      act_console();
+      break;
 
-      case As_Controller:
-        act_controller;
-        break;
+    case As_Controller:
+      act_controller;
+      break;
 
-      case As_ThirdParty:
-        act_thirdparty();
-        break;
+    case As_ThirdParty:
+      act_thirdparty();
+      break;
 
-      default:
-        // Should never reach here!
-        Serial.println("\r\nERROR: GC_Mode CUR_MODE undefined!\r\m");
-        break;
-    }
+    default:
+      // Should never reach here!
+      Serial.println("\r\nERROR: GC_Mode CUR_MODE undefined!\r\m");
+      break;
+  }
 }
 
