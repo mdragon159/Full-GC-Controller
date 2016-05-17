@@ -467,7 +467,7 @@ static uint8_t gc_read(uint8_t* bitbuffer, uint8_t length_in_bits) {
             "brne L%=_1\n" // loop if the counter isn't 0
             
             // Timeout: Simply exit
-            "rjmp L%=_exit\n"
+            "rjmp L%=_early_exit\n"
             
             "L%=_2:\n"
             // Increment return value by one as valid bit is about to be read
@@ -486,9 +486,6 @@ static uint8_t gc_read(uint8_t* bitbuffer, uint8_t length_in_bits) {
             "lsl r23\n" // left shift
             "sbic 0x9,2\n" // read PIND2
             "sbr r23,lo8(1)\n" // set bit 1 in r23 if PIND2 is high
-            "st Z,r23\n" // save r23 back to memory. We technically only have
-            // to do this every 8 bits but this simplifies the branches below
-
             // This block increments the bitcount(r25). If bitcount is 64, exit
             // with success. If bitcount is a multiple of 8, then increment Z
             // and load the next byte.
@@ -498,7 +495,8 @@ static uint8_t gc_read(uint8_t* bitbuffer, uint8_t length_in_bits) {
             "mov r24,r25\n" // copy bitcounter(r25) to r24 for tmp
             "andi r24,lo8(7)\n" // get lower 3 bits
             "brne L%=_3\n" // branch if not 0 (is not divisble by 8)
-            "adiw r30,1\n" // if divisible by 8, increment pointer
+            "st Z,r23\n" // if divisible by 8, save r23 back to memory
+            "adiw r30,1\n" // increment pointer
             "ld r23,Z\n" // ...and load the new byte into r23
             "L%=_3:\n"
 
@@ -511,10 +509,24 @@ static uint8_t gc_read(uint8_t* bitbuffer, uint8_t length_in_bits) {
             // the following happens if the line is still low
             "subi r24,lo8(1)\n"
             "brne L%=_4\n" // loop if the counter isn't 0
-            
-            // Timeout: Simply fall to exit
+            // Timeout: Simply fall to early exit
+
+            // Early exit: Left shift as necessary so first read bit is at the MSB
+            "L%=_early_exit:\n"
+            // If divisible by 8, save and branch to exit
+            // else, left shift, increment by 1, and repeat
+            "mov r24,r25\n" // copy bitcounter(r25) to r24 for tmp
+            "andi r24,lo8(7)\n" // get lower 3 bits
+            "breq L%=_finish_early_exit\n" // branch if 0 (is divisble by 8)
+            "subi r25,lo8(-1)\n" // if not divisible by 8, increment bitcount
+            "lsl r23\n" // left shift
+            "rjmp L%=_early_exit\n"
+
+            "L%=_finish_early_exit:\n"
+            "st Z,r23\n" // save properly shifted r23 back to memory
 
             "L%=_exit:\n"
+            
             ";END OF MANUAL ASSEMBLY BLOCK\n"
             // ----------
             // outputs:
