@@ -13,9 +13,10 @@
 enum GC_Mode {
   As_Console,     // Act as the console and read data from the GC controller
   As_Controller,  // TODO: Act as a controller and respond to console commands
-  As_ThirdParty   // Simply read transactions on the data line
+  As_ThirdParty,  // Simply read transactions on the data line
+  As_Test         // Extra test mode
 };
-const GC_Mode CUR_MODE = As_ThirdParty; // Change this line to change the mode... ideally
+const GC_Mode CUR_MODE = As_Test; // Change this line to change the mode
 
 #define GC_PIN 2
 #define GC_PIN_DIR DDRD
@@ -432,6 +433,182 @@ static uint8_t gc_read(uint8_t* bitbuffer, uint8_t length_in_bits) {
     return retval;
 }
 
+// Responds to commands in the data line
+static int gc_respond() {
+    // listen for the expected 8 bytes of data back from the controller and
+    // and pack it into the gc_status struct.
+    asm volatile (";Starting to respond");
+    
+    // Return value is number of bits read
+    uint8_t retval;
+
+    asm volatile (
+            "; START OF MANUAL ASSEMBLY BLOCK\n"
+            // default exit value is 0 (nothing valuable read)
+            "ldi %[retval],lo8(0)\n"
+
+            // Set jump return for intial check
+            "ldi r23, L%=_check_A1\n"
+            // Read line and hope for a 0
+            "rjmp L%=_read_loop\n"
+
+            // Check first bit- should be a 0 for either probe comamnd
+            "L%=_check_A1:\n"
+            // Should be 0, else certainly not either probing commands!
+            "sbic 0x9,2\n" // reg 9 bit 2 is PIND2, or arduino I/O 2
+            "rjmp L%=_exit\n" // line is high/1. Command read failure 
+            "ldi r23, L%=_check_A2\n" // line is a 0, so check next bit
+            "rjmp L%=_again_read_loop\n"
+
+            // Check second bit- 0 if initialization command, 1 if read command
+            "L%=_check_A2:\n"
+            "sbis 0x9,2\n" // skip next instruction if line is high
+            "rjmp L%=_check_B3\n" // Low, so possibly initialization probe command
+            "ldi r23, L%=_check_A3\n" // High, so possibly read probe command
+            "ldi r25, lo8(12)\n" // Now need to read 12 0's in a row, prime the counter
+            "rjmp L%=_again_read_loop\n"
+
+            // Check for 0's until the counter is over (12 total)
+            "L%=_check_A3:\n"
+            "sbic 0x9,2\n" // skip next instruction if line is low
+            "rjmp L%=_exit\n" // line is high/1. Command read failure 
+            "subi r25,lo8(1)\n" // line is low, decrement the 0s counter
+            "breq L%=_setup_A4\n" // if result is 0, then branch to next check setup
+            // Otherwise, need to still check for more 0's
+            "rjmp L%=_again_read_loop\n" // r23 should still be at this label
+
+            "L%=_setup_A4:\n"
+            "ldi r23, L%=_check_A4\n" // Setup read check address target
+            "ldi r25, lo8(2)\n" // Now need to read 2 more 1's in a row, prime the counter
+            "rjmp L%=_again_read_loop\n"
+
+            // Check for 1's until the counter is over (2 total)
+            "L%=_check_A4:\n"
+            "sbis 0x9,2\n" // skip next instruction if line is high
+            "rjmp L%=_exit\n" // line is low/0. Command read failure 
+            "subi r25,lo8(1)\n" // line is high, decrement the 1s counter
+            "breq L%=_setup_A5\n" // if result is 0, then branch to next check setup
+            // Otherwise, need to still check for more 1's
+            "rjmp L%=_again_read_loop\n" // r23 should still be at this label
+
+            "L%=_setup_A5:\n"
+            "ldi r23, L%=_check_A5\n" // Setup read check address target
+            "ldi r25, lo8(8)\n" // Now need to read 8 more 0's in a row, prime the counter
+            "rjmp L%=_again_read_loop\n"
+
+            // Check for 0's until the counter is over (8 total)
+            "L%=_check_A5:\n"
+            "sbic 0x9,2\n" // skip next instruction if line is low
+            "rjmp L%=_exit\n" // line is high/1. Command read failure 
+            "subi r25,lo8(1)\n" // line is low, decrement the 0s counter
+            "breq L%=_setup_A6\n" // if result is 0, then branch to next check setup
+            // Otherwise, need to still check for more 0's
+            "rjmp L%=_again_read_loop\n" // r23 should still be at this label
+
+            "L%=_setup_A6:\n"
+            "ldi r23, L%=_check_A6\n" // Setup read check address target
+            "rjmp L%=_again_read_loop\n"
+
+            // Checking for the last final 1 (so 0x00 then a single high)
+            "L%=_check_A6:\n"
+            "sbis 0x9,2\n" // skip next instruction if line is high
+            "rjmp L%=_exit\n" // line is low. Command read failure 
+            // Otherwise, success!
+            // TODO: Send actual response
+            // For now, just give a return value of 1 for success of reading read command
+            "ldi %[retval],lo8(1)\n"
+            "rjmp L%=_exit\n" 
+
+            "L%=_setup_B3:\n"
+            "ldi r23, L%=_check_B3\n" // Setup read check address target
+            "ldi r25, lo8(6)\n" // Now need to read 6 more 0's in a row, prime the counter
+            "rjmp L%=_again_read_loop\n"
+            
+            // Check for 0's until the counter is over (6 total)
+            "L%=_check_B3:\n"
+            "sbic 0x9,2\n" // skip next instruction if line is low
+            "rjmp L%=_exit\n" // line is high/1. Command read failure 
+            "subi r25,lo8(1)\n" // line is low, decrement the 0s counter
+            "breq L%=_setup_B4\n" // if result is 0, then branch to next check setup
+            // Otherwise, need to still check for more 0's
+            "rjmp L%=_again_read_loop\n" // r23 should still be at this label
+
+            "L%=_setup_B4:\n"
+            "ldi r23, L%=_check_B4\n" // Setup read check address target
+            "rjmp L%=_again_read_loop\n"
+
+            // Checking for the last final 1 (so 0x00 then a single high)
+            "L%=_check_B4:\n"
+            "sbis 0x9,2\n" // skip next instruction if line is high
+            "rjmp L%=_exit\n" // line is low. Command read failure 
+            // Otherwise, success! Go below
+
+            // Initialization probe command successfully read!
+            "L%=_initialization_response:\n" // For assembly design, not jumped to
+            // TODO: Respond properly
+            // For now, output a 2 for initialization probe read success
+            "ldi %[retval],lo8(2)\n"
+            "rjmp L%=_exit\n"
+
+            /////////////
+
+            "L%=_read_loop:\n"
+            // This first spinloop waits for the line to go low. It loops 64
+            // times before it gives up and returns
+            "ldi r24,lo8(64)\n" // r24 is the timeout counter
+            "L%=_read_loop2:\n"
+            "sbis 0x9,2\n" // reg 9 bit 2 is PIND2, or arduino I/O 2
+            "rjmp L%=_read_loop3\n" // line is low. jump to below
+            // the following happens if the line is still high
+            "subi r24,lo8(1)\n"
+            "brne L%=_read_loop2\n" // loop if the counter isn't 0
+            // TODO: Revisit timeout part
+            "rjmp L%=_exit\n"
+
+            "L%=_read_loop3:\n"
+            // Wait approx 2us (16MHz so 16 cycles = 1us, 28 nops here)
+            "nop\nnop\nnop\nnop\nnop\n"
+            "nop\nnop\nnop\nnop\nnop\n"
+            "nop\nnop\nnop\nnop\nnop\n"
+            "nop\nnop\nnop\nnop\nnop\n"
+            "nop\nnop\nnop\nnop\nnop\n"
+            "nop\nnop\nnop\n"
+            // Jump to stored check address (2 cycles)
+            "rjmp r23\n"
+            
+
+            // Wait for line to be high before continuing
+            "L%=_again_read_loop:\n"
+            "ldi r24,lo8(64)\n" // r24 is the timeout counter
+            "L%=_again_read_loop2:\n"
+            "sbic 0x9,2\n" // checks PIND2
+            "rjmp L%=_read_loop\n" // line is high. ready for next loop
+            // the following happens if the line is still low
+            "subi r24,lo8(1)\n"
+            "brne L%=_again_read_loop2\n" // loop if the counter isn't 0
+            // Timeout: Simply fall to early exit
+            // TODO: Different action? Different return value?
+
+
+
+
+            "L%=_exit:\n"
+            
+            ";END OF MANUAL ASSEMBLY BLOCK\n"
+            // ----------
+            // outputs:
+            : [retval] "=r" (retval)
+            // clobbers (registers we use in the assembly for the compiler to
+            // avoid):
+              // r23 = holds jump target after reads
+              // r24 = scratch register (ex: timeout down counter)
+              // r25 = down counter for reading sequence of bits
+            :: "r25", "r24", "r23"            
+            );
+
+    return 0;
+}
+
 static void print_gc_status()
 {
     Serial.println();
@@ -483,6 +660,22 @@ static void print_gc_status()
     Serial.flush();
 }
 
+static void print_bits_read(const uint8_t* data, uint8_t data_length, uint8_t bitsRead) {
+  Serial.print("Bits read: ");
+  Serial.println(bitsRead);
+
+  // Output the full 8 bytes of data
+  for(int i = 0; i < data_length; i++) {
+    // Output each bit in the uint8_t in MSB order (which is read order)
+    uint8_t bitPlace = 0x80; // 128
+    for(int j = 7; j >= 0; j--) {
+      Serial.print(*(data+i) & bitPlace ? 1:0); // print out current bit
+      bitPlace /= 2; // 128 -> 64 -> 32 -> 16 -> 8 -> 4 -> 2 -> 1
+    }
+    Serial.print(" "); // Byte spacer
+  }
+  Serial.println();
+}
 
 
 /****** FUNCTIONS: Act As functions *******/
@@ -559,32 +752,32 @@ inline void act_thirdparty() {
   const uint8_t SIZE = 16;
   uint8_t data[SIZE] = {0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0};
 
-  // Read in 8 bytes
+  // Read in 16 bytes max
   noInterrupts();
   int bitsRead = 0;
   while(!bitsRead)
     bitsRead = gc_read(data, 128);
   interrupts();
 
-
-  // Output number of bits read
-  Serial.print("Bits read: ");
-  Serial.println(bitsRead);
-
-  // Output the full 8 bytes of data
-  for(int i = 0; i < SIZE; i++) {
-    // Output each bit in the char in MSB order (which is read order)
-    uint8_t bitPlace = 0x80; // 128
-    for(int j = 7; j >= 0; j--) {
-      Serial.print(data[i] & bitPlace ? 1:0); // print out current bit
-      bitPlace /= 2; // 128 -> 64 -> 32 -> 16 -> 8 -> 4 -> 2 -> 1
-    }
-    Serial.print(" "); // Byte spacer
-  }
-  Serial.println();
+  // Output read data
+  print_bits_read(data, SIZE, bitsRead);
   
 }
 
+inline void act_test() {
+  // Initialize 8 bytes worth of space to read
+  int response = 0;
+
+  // Keep reading until read more than 9 bits and first 9 bits is the initial probe command
+  noInterrupts();
+  do {
+    response = gc_respond();
+  }
+  while(!response);
+  interrupts();
+
+  Serial.println(response);
+}
 
 /****** FUNCTIONS: Base Arduino functions *******/
 
@@ -632,6 +825,17 @@ void setup()
       // controller until we get a reading that is less erroneous.
     } while (zero_x == 0 || zero_y == 0);
   }  
+  // Otherwise, initialize the gc status for default data to send
+  else {
+    gc_status.data1 = 0x00;
+    gc_status.data2 = 0x80;
+    gc_status.stick_x = 0x7A;
+    gc_status.stick_y = 0x7B;
+    gc_status.cstick_x = 0x7E;
+    gc_status.cstick_y = 0x83;
+    gc_status.left = 0x74;
+    gc_status.right = 0x17;
+  }
 }
 
 void loop()
@@ -649,6 +853,11 @@ void loop()
 
     case As_ThirdParty:
       act_thirdparty();
+      break;
+
+    case As_Test:
+      act_test();
+      
       break;
 
     default:
