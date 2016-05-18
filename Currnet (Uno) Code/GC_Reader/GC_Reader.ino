@@ -447,151 +447,412 @@ static int gc_respond() {
             // default exit value is 0 (nothing valuable read)
             "ldi %[retval],lo8(0)\n"
 
-            // Set jump return for intial check
-            "ldi r23, L%=_check_A1\n"
-            // Read line and hope for a 0
-            "rjmp L%=_read_loop\n"
-
-            // Check first bit- should be a 0 for either probe comamnd
+            // Check first bit- should be a 0 for both probe commands
             "L%=_check_A1:\n"
-            // Should be 0, else certainly not either probing commands!
+            // Wait for data to be ready on the line
+            //------------------------------------------> LINE LOW PART
+                // This first spinloop waits for the line to go low. It loops 64
+                // times before it gives up and returns
+                "ldi r24,lo8(64)\n" // r24 is the timeout counter
+                "L%=_A1_read_loop:\n"
+                "sbis 0x9,2\n" // reg 9 bit 2 is PIND2, or arduino I/O 2
+                "rjmp L%=_A1_read_loop2\n" // line is low. jump to below
+                // the following happens if the line is still high
+                "subi r24,lo8(1)\n"
+                "brne L%=_A1_read_loop\n" // loop if the counter isn't 0
+                // TODO: Revisit timeout part
+                "rjmp L%=_exit\n"
+    
+                "L%=_A1_read_loop2:\n"
+                // Wait approx 2us (16MHz so 16 cycles = 1us, 30 nops here)
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+            //<------------------------------------------
+
+            // Line better be 0 at first, else not start of either probing command!
             "sbic 0x9,2\n" // reg 9 bit 2 is PIND2, or arduino I/O 2
             "rjmp L%=_exit\n" // line is high/1. Command read failure 
-            "ldi r23, L%=_check_A2\n" // line is a 0, so check next bit
-            "rjmp L%=_again_read_loop\n"
+            // Wait for data line to be high before continuing with read
+            //------------------------------------------> LINE HIGHPART
+                "ldi r24,lo8(64)\n" // r24 is the timeout counter
+                "L%=_A1_high_wait:\n"
+                "sbic 0x9,2\n" // checks PIND2
+                "rjmp L%=_check_A2\n" // line is high. ready for next loop
+                // the following happens if the line is still low
+                "subi r24,lo8(1)\n"
+                "brne L%=_A1_high_wait\n" // loop if the counter isn't 0
+                // Timeout: Exit
+                // TODO: Different action? Different return value?
+                "rjmp L%=_exit\n"
+            //<------------------------------------------
 
-            // Check second bit- 0 if initialization command, 1 if read command
+            // Check for a 1 or 0, depending on potentially which probe command
             "L%=_check_A2:\n"
+            // Wait for data to be ready on the line
+            //------------------------------------------> LINE LOW PART
+                // This first spinloop waits for the line to go low. It loops 64
+                // times before it gives up and returns
+                "ldi r24,lo8(64)\n" // r24 is the timeout counter
+                "L%=_A2_read_loop:\n"
+                "sbis 0x9,2\n" // reg 9 bit 2 is PIND2, or arduino I/O 2
+                "rjmp L%=_A2_read_loop2\n" // line is low. jump to below
+                // the following happens if the line is still high
+                "subi r24,lo8(1)\n"
+                "brne L%=_A2_read_loop\n" // loop if the counter isn't 0
+                // TODO: Revisit timeout part
+                "rjmp L%=_exit\n"
+    
+                "L%=_A2_read_loop2:\n"
+                // Wait approx 2us (16MHz so 16 cycles = 1us, 30 nops here)
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+            //<------------------------------------------
+            // Check second bit- 0 = initialization probe command, 1 = read probe command
             "sbis 0x9,2\n" // skip next instruction if line is high
-            "rjmp L%=_check_B3\n" // Low, so possibly initialization probe command
-            "ldi r23, L%=_check_A3\n" // High, so possibly read probe command
-            "ldi r25, lo8(12)\n" // Now need to read 12 0's in a row, prime the counter
-            "rjmp L%=_again_read_loop\n"
+            "rjmp L%=_setup_B3\n" // Low, so possibly initialization probe command
+            // Otherwise, a 1 so need 12 0's in a row so get ready to read that
+            "ldi r25, lo8(12)\n" // Down counter
+            // Wait for data line to be high before continuing with read
+            //------------------------------------------> LINE HIGHPART
+                "ldi r24,lo8(64)\n" // r24 is the timeout counter
+                "L%=_A2_high_wait:\n"
+                "sbic 0x9,2\n" // checks PIND2
+                "rjmp L%=_check_A3\n" // line is high. ready for next loop
+                // the following happens if the line is still low
+                "subi r24,lo8(1)\n"
+                "brne L%=_A2_high_wait\n" // loop if the counter isn't 0
+                // Timeout: Exit
+                // TODO: Different action? Different return value?
+                "rjmp L%=_exit\n"
+            //<------------------------------------------
 
-            // Check for 0's until the counter is over (12 total)
+            // Read 0's till counter reaches 0 (total 12)
             "L%=_check_A3:\n"
+            // Wait for data to be ready on the line
+            //------------------------------------------> LINE LOW PART
+                // This first spinloop waits for the line to go low. It loops 64
+                // times before it gives up and returns
+                "ldi r24,lo8(64)\n" // r24 is the timeout counter
+                "L%=_A3_read_loop:\n"
+                "sbis 0x9,2\n" // reg 9 bit 2 is PIND2, or arduino I/O 2
+                "rjmp L%=_A3_read_loop2\n" // line is low. jump to below
+                // the following happens if the line is still high
+                "subi r24,lo8(1)\n"
+                "brne L%=_A3_read_loop\n" // loop if the counter isn't 0
+                // TODO: Revisit timeout part
+                "rjmp L%=_exit\n"
+    
+                "L%=_A3_read_loop2:\n"
+                // Wait approx 2us (16MHz so 16 cycles = 1us, 30 nops here)
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+            //<------------------------------------------
+            // Better be a 0- else read issue
             "sbic 0x9,2\n" // skip next instruction if line is low
             "rjmp L%=_exit\n" // line is high/1. Command read failure 
             "subi r25,lo8(1)\n" // line is low, decrement the 0s counter
             "breq L%=_setup_A4\n" // if result is 0, then branch to next check setup
-            // Otherwise, need to still check for more 0's
-            "rjmp L%=_again_read_loop\n" // r23 should still be at this label
+            // Otherwise, wait for line to be high then recheck for more 0's
+            //------------------------------------------> LINE HIGHPART
+                "ldi r24,lo8(64)\n" // r24 is the timeout counter
+                "L%=_A3_high_wait:\n"
+                "sbic 0x9,2\n" // checks PIND2
+                "rjmp L%=_check_A3\n" // line is high. ready for next loop
+                // the following happens if the line is still low
+                "subi r24,lo8(1)\n"
+                "brne L%=_A3_high_wait\n" // loop if the counter isn't 0
+                // Timeout: Exit
+                // TODO: Different action? Different return value?
+                "rjmp L%=_exit\n"
+            //<------------------------------------------
 
             "L%=_setup_A4:\n"
-            "ldi r23, L%=_check_A4\n" // Setup read check address target
-            "ldi r25, lo8(2)\n" // Now need to read 2 more 1's in a row, prime the counter
-            "rjmp L%=_again_read_loop\n"
+            "ldi r25, lo8(2)\n" // Need to check for 2 1's so setup counter
+            // Wait for line to be high again then jump to check_A4
+            //------------------------------------------> LINE HIGHPART
+                "ldi r24,lo8(64)\n" // r24 is the timeout counter
+                "L%=_A4s_high_wait:\n"
+                "sbic 0x9,2\n" // checks PIND2
+                "rjmp L%=_check_A4\n" // line is high. ready for next loop
+                // the following happens if the line is still low
+                "subi r24,lo8(1)\n"
+                "brne L%=_A4s_high_wait\n" // loop if the counter isn't 0
+                // Timeout: Exit
+                // TODO: Different action? Different return value?
+                "rjmp L%=_exit\n"
+            //<------------------------------------------
 
-            // Check for 1's until the counter is over (2 total)
+            // Read 1's until counter is 0 (total 2)
             "L%=_check_A4:\n"
+            // Wait for data to be ready on the line
+            //------------------------------------------> LINE LOW PART
+                // This first spinloop waits for the line to go low. It loops 64
+                // times before it gives up and returns
+                "ldi r24,lo8(64)\n" // r24 is the timeout counter
+                "L%=_A4_read_loop:\n"
+                "sbis 0x9,2\n" // reg 9 bit 2 is PIND2, or arduino I/O 2
+                "rjmp L%=_A4_read_loop2\n" // line is low. jump to below
+                // the following happens if the line is still high
+                "subi r24,lo8(1)\n"
+                "brne L%=_A4_read_loop\n" // loop if the counter isn't 0
+                // TODO: Revisit timeout part
+                "rjmp L%=_exit\n"
+    
+                "L%=_A4_read_loop2:\n"
+                // Wait approx 2us (16MHz so 16 cycles = 1us, 30 nops here)
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+            //<------------------------------------------
             "sbis 0x9,2\n" // skip next instruction if line is high
             "rjmp L%=_exit\n" // line is low/0. Command read failure 
             "subi r25,lo8(1)\n" // line is high, decrement the 1s counter
             "breq L%=_setup_A5\n" // if result is 0, then branch to next check setup
-            // Otherwise, need to still check for more 1's
-            "rjmp L%=_again_read_loop\n" // r23 should still be at this label
+            // Otherwise, wait for line to be high then recheck for another 1
+            //------------------------------------------> LINE HIGHPART
+                "ldi r24,lo8(64)\n" // r24 is the timeout counter
+                "L%=_A4_high_wait:\n"
+                "sbic 0x9,2\n" // checks PIND2
+                "rjmp L%=_check_A4\n" // line is high. ready for next loop
+                // the following happens if the line is still low
+                "subi r24,lo8(1)\n"
+                "brne L%=_A4_high_wait\n" // loop if the counter isn't 0
+                // Timeout: Exit
+                // TODO: Different action? Different return value?
+                "rjmp L%=_exit\n"
+            //<------------------------------------------
+
 
             "L%=_setup_A5:\n"
-            "ldi r23, L%=_check_A5\n" // Setup read check address target
-            "ldi r25, lo8(8)\n" // Now need to read 8 more 0's in a row, prime the counter
-            "rjmp L%=_again_read_loop\n"
+            "ldi r25, lo8(8)\n" // Need to check for 8 0's so setup counter
+            // Wait for line to be high again then jump to check_A4
+            //------------------------------------------> LINE HIGHPART
+                "ldi r24,lo8(64)\n" // r24 is the timeout counter
+                "L%=_A5s_high_wait:\n"
+                "sbic 0x9,2\n" // checks PIND2
+                "rjmp L%=_check_A5\n" // line is high. ready for next loop
+                // the following happens if the line is still low
+                "subi r24,lo8(1)\n"
+                "brne L%=_A5s_high_wait\n" // loop if the counter isn't 0
+                // Timeout: Exit
+                // TODO: Different action? Different return value?
+                "rjmp L%=_exit\n"
+            //<------------------------------------------
 
-            // Check for 0's until the counter is over (8 total)
+            // Read 0's until counter is 0 (total 8)
             "L%=_check_A5:\n"
+            // Wait for data to be ready on the line
+            //------------------------------------------> LINE LOW PART
+                // This first spinloop waits for the line to go low. It loops 64
+                // times before it gives up and returns
+                "ldi r24,lo8(64)\n" // r24 is the timeout counter
+                "L%=_A5_read_loop:\n"
+                "sbis 0x9,2\n" // reg 9 bit 2 is PIND2, or arduino I/O 2
+                "rjmp L%=_A5_read_loop2\n" // line is low. jump to below
+                // the following happens if the line is still high
+                "subi r24,lo8(1)\n"
+                "brne L%=_A5_read_loop\n" // loop if the counter isn't 0
+                // TODO: Revisit timeout part
+                "rjmp L%=_exit\n"
+    
+                "L%=_A5_read_loop2:\n"
+                // Wait approx 2us (16MHz so 16 cycles = 1us, 30 nops here)
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+            //<------------------------------------------
             "sbic 0x9,2\n" // skip next instruction if line is low
             "rjmp L%=_exit\n" // line is high/1. Command read failure 
             "subi r25,lo8(1)\n" // line is low, decrement the 0s counter
-            "breq L%=_setup_A6\n" // if result is 0, then branch to next check setup
-            // Otherwise, need to still check for more 0's
-            "rjmp L%=_again_read_loop\n" // r23 should still be at this label
+            "breq L%=_check_A6\n" // if result is 0, then branch to next check
+            // Otherwise, wait for line to be high then recheck for more 0's
+            //------------------------------------------> LINE HIGHPART
+                "ldi r24,lo8(64)\n" // r24 is the timeout counter
+                "L%=_A5_high_wait:\n"
+                "sbic 0x9,2\n" // checks PIND2
+                "rjmp L%=_check_A5\n" // line is high. ready for next loop
+                // the following happens if the line is still low
+                "subi r24,lo8(1)\n"
+                "brne L%=_A5_high_wait\n" // loop if the counter isn't 0
+                // Timeout: Exit
+                // TODO: Different action? Different return value?
+                "rjmp L%=_exit\n"
+            //<------------------------------------------
 
-            "L%=_setup_A6:\n"
-            "ldi r23, L%=_check_A6\n" // Setup read check address target
-            "rjmp L%=_again_read_loop\n"
-
-            // Checking for the last final 1 (so 0x00 then a single high)
+            // Simply check for a 1- if so, then this is the read probe command!
             "L%=_check_A6:\n"
+             // Wait for data to be ready on the line
+            //------------------------------------------> LINE LOW PART
+                // This first spinloop waits for the line to go low. It loops 64
+                // times before it gives up and returns
+                "ldi r24,lo8(64)\n" // r24 is the timeout counter
+                "L%=_A6_read_loop:\n"
+                "sbis 0x9,2\n" // reg 9 bit 2 is PIND2, or arduino I/O 2
+                "rjmp L%=_A6_read_loop2\n" // line is low. jump to below
+                // the following happens if the line is still high
+                "subi r24,lo8(1)\n"
+                "brne L%=_A6_read_loop\n" // loop if the counter isn't 0
+                // TODO: Revisit timeout part
+                "rjmp L%=_exit\n"
+    
+                "L%=_A6_read_loop2:\n"
+                // Wait approx 2us (16MHz so 16 cycles = 1us, 30 nops here)
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+            //<------------------------------------------
             "sbis 0x9,2\n" // skip next instruction if line is high
-            "rjmp L%=_exit\n" // line is low. Command read failure 
-            // Otherwise, success!
-            // TODO: Send actual response
-            // For now, just give a return value of 1 for success of reading read command
+            "rjmp L%=_exit\n" // line is low/0. Command read failure 
+            // Wait for data line to be high before continuing for safety
+            //------------------------------------------> LINE HIGHPART
+                "ldi r24,lo8(64)\n" // r24 is the timeout counter
+                "L%=_A6_high_wait:\n"
+                "sbic 0x9,2\n" // checks PIND2
+                "rjmp L%=_respond_A\n" // line is high. ready for next loop
+                // the following happens if the line is still low
+                "subi r24,lo8(1)\n"
+                "brne L%=_A6_high_wait\n" // loop if the counter isn't 0
+                // Timeout: Exit
+                // TODO: Different action? Different return value?
+                "rjmp L%=_exit\n"
+            //<------------------------------------------
+
+            // TODO: Success, found read probe command! Now, respond!
+            "L%=_respond_A:\n"
+            // For now, just return a 1 for success
             "ldi %[retval],lo8(1)\n"
             "rjmp L%=_exit\n" 
 
+            // *************************************************************
             "L%=_setup_B3:\n"
-            "ldi r23, L%=_check_B3\n" // Setup read check address target
-            "ldi r25, lo8(6)\n" // Now need to read 6 more 0's in a row, prime the counter
-            "rjmp L%=_again_read_loop\n"
-            
-            // Check for 0's until the counter is over (6 total)
+            "ldi r25, lo8(6)\n" // Need to check for 6 more 0's so setup counter
+            // Wait for line to be high again then jump to check_A4
+            //------------------------------------------> LINE HIGHPART
+                "ldi r24,lo8(64)\n" // r24 is the timeout counter
+                "L%=_B3s_high_wait:\n"
+                "sbic 0x9,2\n" // checks PIND2
+                "rjmp L%=_check_B3\n" // line is high. ready for next loop
+                // the following happens if the line is still low
+                "subi r24,lo8(1)\n"
+                "brne L%=_B3s_high_wait\n" // loop if the counter isn't 0
+                // Timeout: Exit
+                // TODO: Different action? Different return value?
+                "rjmp L%=_exit\n"
+            //<------------------------------------------v
+
+            // Read 0's until counter is 0 (total 6)
             "L%=_check_B3:\n"
+            // Wait for data to be ready on the line
+            //------------------------------------------> LINE LOW PART
+                // This first spinloop waits for the line to go low. It loops 64
+                // times before it gives up and returns
+                "ldi r24,lo8(64)\n" // r24 is the timeout counter
+                "L%=_B3_read_loop:\n"
+                "sbis 0x9,2\n" // reg 9 bit 2 is PIND2, or arduino I/O 2
+                "rjmp L%=_B3_read_loop2\n" // line is low. jump to below
+                // the following happens if the line is still high
+                "subi r24,lo8(1)\n"
+                "brne L%=_B3_read_loop\n" // loop if the counter isn't 0
+                // TODO: Revisit timeout part
+                "rjmp L%=_exit\n"
+    
+                "L%=_B3_read_loop2:\n"
+                // Wait approx 2us (16MHz so 16 cycles = 1us, 30 nops here)
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+            //<------------------------------------------
             "sbic 0x9,2\n" // skip next instruction if line is low
             "rjmp L%=_exit\n" // line is high/1. Command read failure 
             "subi r25,lo8(1)\n" // line is low, decrement the 0s counter
-            "breq L%=_setup_B4\n" // if result is 0, then branch to next check setup
-            // Otherwise, need to still check for more 0's
-            "rjmp L%=_again_read_loop\n" // r23 should still be at this label
+            "breq L%=_check_B4\n" // if result is 0, then branch to next check
+            // Otherwise, wait for line to be high then recheck for more 0's
+            //------------------------------------------> LINE HIGHPART
+                "ldi r24,lo8(64)\n" // r24 is the timeout counter
+                "L%=_B3_high_wait:\n"
+                "sbic 0x9,2\n" // checks PIND2
+                "rjmp L%=_check_B3\n" // line is high. ready for next loop
+                // the following happens if the line is still low
+                "subi r24,lo8(1)\n"
+                "brne L%=_B3_high_wait\n" // loop if the counter isn't 0
+                // Timeout: Exit
+                // TODO: Different action? Different return value?
+                "rjmp L%=_exit\n"
+            //<------------------------------------------
 
-            "L%=_setup_B4:\n"
-            "ldi r23, L%=_check_B4\n" // Setup read check address target
-            "rjmp L%=_again_read_loop\n"
-
-            // Checking for the last final 1 (so 0x00 then a single high)
+            // Simply check for a 1- if so, then command reading success!
             "L%=_check_B4:\n"
+             // Wait for data to be ready on the line
+            //------------------------------------------> LINE LOW PART
+                // This first spinloop waits for the line to go low. It loops 64
+                // times before it gives up and returns
+                "ldi r24,lo8(64)\n" // r24 is the timeout counter
+                "L%=_B4_read_loop:\n"
+                "sbis 0x9,2\n" // reg 9 bit 2 is PIND2, or arduino I/O 2
+                "rjmp L%=_B4_read_loop2\n" // line is low. jump to below
+                // the following happens if the line is still high
+                "subi r24,lo8(1)\n"
+                "brne L%=_B4_read_loop\n" // loop if the counter isn't 0
+                // TODO: Revisit timeout part
+                "rjmp L%=_exit\n"
+    
+                "L%=_B4_read_loop2:\n"
+                // Wait approx 2us (16MHz so 16 cycles = 1us, 30 nops here)
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+                "nop\nnop\nnop\nnop\nnop\n"
+            //<------------------------------------------
             "sbis 0x9,2\n" // skip next instruction if line is high
-            "rjmp L%=_exit\n" // line is low. Command read failure 
-            // Otherwise, success! Go below
+            "rjmp L%=_exit\n" // line is low/0. Command read failure 
+            // Wait for data line to be high before continuing for safety
+            //------------------------------------------> LINE HIGHPART
+                "ldi r24,lo8(64)\n" // r24 is the timeout counter
+                "L%=_B4_high_wait:\n"
+                "sbic 0x9,2\n" // checks PIND2
+                "rjmp L%=_respond_B\n" // line is high. ready for next loop
+                // the following happens if the line is still low
+                "subi r24,lo8(1)\n"
+                "brne L%=_B4_high_wait\n" // loop if the counter isn't 0
+                // Timeout: Exit
+                // TODO: Different action? Different return value?
+                "rjmp L%=_exit\n"
+            //<------------------------------------------
 
-            // Initialization probe command successfully read!
-            "L%=_initialization_response:\n" // For assembly design, not jumped to
-            // TODO: Respond properly
-            // For now, output a 2 for initialization probe read success
+            // TODO: Success, found initialization probe command! Now, respond!
+            "L%=_respond_B:\n"
+            // For now, just return a 2 for success
             "ldi %[retval],lo8(2)\n"
-            "rjmp L%=_exit\n"
-
-            /////////////
-
-            "L%=_read_loop:\n"
-            // This first spinloop waits for the line to go low. It loops 64
-            // times before it gives up and returns
-            "ldi r24,lo8(64)\n" // r24 is the timeout counter
-            "L%=_read_loop2:\n"
-            "sbis 0x9,2\n" // reg 9 bit 2 is PIND2, or arduino I/O 2
-            "rjmp L%=_read_loop3\n" // line is low. jump to below
-            // the following happens if the line is still high
-            "subi r24,lo8(1)\n"
-            "brne L%=_read_loop2\n" // loop if the counter isn't 0
-            // TODO: Revisit timeout part
-            "rjmp L%=_exit\n"
-
-            "L%=_read_loop3:\n"
-            // Wait approx 2us (16MHz so 16 cycles = 1us, 28 nops here)
-            "nop\nnop\nnop\nnop\nnop\n"
-            "nop\nnop\nnop\nnop\nnop\n"
-            "nop\nnop\nnop\nnop\nnop\n"
-            "nop\nnop\nnop\nnop\nnop\n"
-            "nop\nnop\nnop\nnop\nnop\n"
-            "nop\nnop\nnop\n"
-            // Jump to stored check address (2 cycles)
-            "rjmp r23\n"
-            
-
-            // Wait for line to be high before continuing
-            "L%=_again_read_loop:\n"
-            "ldi r24,lo8(64)\n" // r24 is the timeout counter
-            "L%=_again_read_loop2:\n"
-            "sbic 0x9,2\n" // checks PIND2
-            "rjmp L%=_read_loop\n" // line is high. ready for next loop
-            // the following happens if the line is still low
-            "subi r24,lo8(1)\n"
-            "brne L%=_again_read_loop2\n" // loop if the counter isn't 0
-            // Timeout: Simply fall to early exit
-            // TODO: Different action? Different return value?
+            "rjmp L%=_exit\n" 
 
 
-
-
+ 
             "L%=_exit:\n"
             
             ";END OF MANUAL ASSEMBLY BLOCK\n"
@@ -600,13 +861,12 @@ static int gc_respond() {
             : [retval] "=r" (retval)
             // clobbers (registers we use in the assembly for the compiler to
             // avoid):
-              // r23 = holds jump target after reads
               // r24 = scratch register (ex: timeout down counter)
               // r25 = down counter for reading sequence of bits
-            :: "r25", "r24", "r23"            
+            :: "r25", "r24"         
             );
 
-    return 0;
+    return retval;
 }
 
 static void print_gc_status()
@@ -773,7 +1033,7 @@ inline void act_test() {
   do {
     response = gc_respond();
   }
-  while(!response);
+  while(response == 0);
   interrupts();
 
   Serial.println(response);
