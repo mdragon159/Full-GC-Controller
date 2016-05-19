@@ -442,8 +442,14 @@ static int gc_respond() {
     // Return value is number of bits read
     uint8_t retval;
 
-    uint8_t* respond_buffer = (uint8_t*) &gc_status.data1;
-    uint8_t length_in_bytes = 8;
+    //uint8_t* respond_buffer = (uint8_t*) &gc_status.data1;
+    //uint8_t length_in_bytes = 8;
+
+    //uint8_t respond_buffer[] = {0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00};
+   // uint8_t respond_buffer_array[] = {0x00,0x00, 0x00,0x00, 0x00,0x00, 0x00,0x00};
+    uint8_t respond_buffer_array[] = {0x00,0x80};
+    uint8_t* respond_buffer = respond_buffer_array;
+    uint8_t length_in_bytes = 2;
 
     asm volatile (
             "; START OF MANUAL ASSEMBLY BLOCK\n"
@@ -741,11 +747,6 @@ static int gc_respond() {
                 "rjmp L%=_exit\n"
             //<------------------------------------------
 
-            // TODO: Success, found read probe command! Now, respond!
-            "L%=_respond_A:\n"
-            "ldi %[retval],lo8(1)\n"
-            "rjmp L%=_respond_base\n" 
-
             // *************************************************************
             "L%=_setup_B3:\n"
             "ldi r25, lo8(6)\n" // Need to check for 6 more 0's so setup counter
@@ -847,15 +848,76 @@ static int gc_respond() {
                 "rjmp L%=_exit\n"
             //<------------------------------------------
 
-            // TODO: Success, found initialization probe command! Now, respond!
+            // Success, found initialization probe command! Now, respond!
             "L%=_respond_B:\n"
-            "ldi %[retval],lo8(2)\n"
-            "rjmp L%=_respond_base\n" 
+            
+            "ldi %[retval],lo8(2)\n" // Set return value to 2 to show got here
+            // Now need to send a null byte to tell console that we understood
+              // NOTE: Not entirely sure if this is EXACTLY what the console expects
+              //        but it works
+
+            "rjmp L%=_respond_A_test\n" // FIXFIXFIX
+
+            "ldi r24,lo8(64)\n"  // Set up bit counter to send 8 total 0's
+            // This label starts the inner loop, which sends a single bit
+            ".L%=_send_loopB:\n"
+            "sbi 0xa,2\n" // (2) pull the line low
+
+            // this block is the timing for a 0 bit (3µs low, 1µs high)
+            // Need to go high in 3*16 - 2 (below cbi) = 46 cycles
+            "nop\nnop\nnop\nnop\nnop\n" // (5)
+            "nop\nnop\nnop\nnop\nnop\n" // (5)
+            "nop\nnop\nnop\nnop\nnop\n" // (5)
+            "nop\nnop\nnop\nnop\nnop\n" // (5)
+            "nop\nnop\nnop\nnop\nnop\n" // (5)
+            "nop\nnop\nnop\nnop\nnop\n" // (5)
+            "nop\nnop\nnop\nnop\nnop\n" // (5)
+            "nop\nnop\nnop\nnop\nnop\n" // (5)
+            "nop\nnop\nnop\nnop\nnop\n" // (5)
+            "nop\n" // (1)
+            "cbi 0xa,2\n" // (2) set the line high again
 
 
+            // The two branches meet up here.
+            // We are now *exactly* 3µs into the sending of a bit, and the line
+            // is high again. We have 1µs to do the looping and iteration
+            // logic.
+            "subi r24,lo8(1)\n" // (1) subtract 1 from our bit counter
+            "breq .L%=_respondB_exit\n" // (1/2) branch if we've sent all the bits of this byte
+
+            // At this point, we have more bits to send in this byte, but the
+            // line must remain high for another 1µs (minus the above
+            // instructions and the jump below and the sbi instruction at the
+            // top of the loop)
+            // 16 - 2(above) - 2 (rjmp below) - 2 (sbi after jump) = 10
+            "nop\nnop\nnop\nnop\nnop\n" // (5)
+            "nop\nnop\nnop\nnop\nnop\n" // (5)
+            "rjmp .L%=_send_loopB\n"
+            
+            ".L%=_respondB_exit:\n"            
+            // final task: send the stop bit, which is a 1 (1µs low 3µs high)
+            // the line goes low in:
+            // 16 - 6 (above since line went high) - 2 (sbi instruction below) = 8 cycles
+            "nop\nnop\nnop\nnop\nnop\n" // (5)
+            "nop\nnop\nnop\n" // (3)
+            "sbi 0xa,2\n" // (2) pull the line low
+            // stay low for 1µs
+            // 16 - 2 (below cbi) = 14
+            "nop\nnop\nnop\nnop\nnop\n" // (5)
+            "nop\nnop\nnop\nnop\nnop\n" // (5)
+            "nop\nnop\nnop\nnop\n" // (4)
+            "cbi 0xa,2\n" // (2) set the line high again
+            
+            "rjmp L%=_exit\n" // Simply exit
+            
             //==================================================================
 
-            "L%=_respond_base:\n"
+            // Success, found read probe command! Now, respond with controller data!
+            "L%=_respond_A:\n"
+            "ldi %[retval],lo8(1)\n"  // Set return value to 2 to show got here
+            
+            "L%=_respond_A_test:\n" // FIXFIXFIX
+            
             // passed in to this block are:
             // the Z register (r31:r30) is the buffer pointer
             // %[length_in_bytes] is the register holding the length of the buffer in bytes
@@ -970,10 +1032,8 @@ static int gc_respond() {
             "cbi 0xa,2\n" // (2) set the line high again
 
             // just stay high. no need to wait 3µs before returning
-            
 
 
- 
             "L%=_exit:\n"
             
             ";END OF MANUAL ASSEMBLY BLOCK\n"
